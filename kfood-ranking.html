@@ -258,10 +258,10 @@
     <div class="field">
       <label for="apiKey">YouTube Data API v3 키</label>
       <div class="key-row">
-        <input type="password" id="apiKey" autocomplete="off" placeholder="AIza...">
+        <input type="password" id="apiKey" autocomplete="off" placeholder="비워두면 내장 기본 키 사용">
         <button class="btn-ghost" id="toggleKey" type="button">표시</button>
       </div>
-      <p class="hint">키는 이 브라우저(localStorage)에만 저장됩니다. 발급: <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → 사용자 인증 정보</a></p>
+      <p class="hint">기본 키가 내장되어 있어 그대로 사용 가능합니다. 본인 키로 쓰려면 여기에 입력하세요 (이 브라우저에만 저장). 발급: <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → 사용자 인증 정보</a></p>
     </div>
     <div class="field">
       <label>검색 키워드 — 국가별, 한 줄에 하나 (해당 국가 언어 추천)</label>
@@ -344,6 +344,9 @@
     today:    "kfd_vid_today",    // 영상 랭킹 스냅숏 (채널 랭킹 시절 키와 분리)
     prev:     "kfd_vid_prev"
   };
+  // 내장 기본 키 (table-japan 프로젝트, lastmaze2026.github.io 리퍼러 제한 적용 전제)
+  // 설정에서 다른 키를 입력하면 그 키가 우선 적용됩니다.
+  var DEFAULT_KEY = "AIzaSyB79neDgGO1Rf2WORyu8cklGP0jqwn6X8w";
 
   var COUNTRIES = [
     { code:"kr", label:"한국",   region:"KR", lang:"ko",
@@ -612,12 +615,7 @@
 
   function refresh(){
     if (refreshing) return;
-    var key = lsGet(LS.key, "") || lsGet("kfj_apikey", "") || lsGet("kfk_apikey", "") || lsGet("kfe_apikey", "");
-    if (!key){
-      showMsg("먼저 설정에서 YouTube API 키를 저장해주세요.", "error");
-      $("settingsPanel").classList.add("open");
-      return;
-    }
+    var key = lsGet(LS.key, "") || DEFAULT_KEY;
     var kw = lsGet(LS.keywords, defaultKeywords());
     var tg = lsGet(LS.hashtags, {});
     var queries = {};
@@ -905,10 +903,7 @@
   loadSettingsUI();
   renderFromSnapshot();
   var cur = lsGet(LS.today, null);
-  var hasKey = lsGet(LS.key, "") || lsGet("kfj_apikey", "") || lsGet("kfk_apikey", "") || lsGet("kfe_apikey", "");
-  if (!hasKey){
-    $("settingsPanel").classList.add("open");
-  } else if (!cur || cur.date !== todayStr()){
+  if (!cur || cur.date !== todayStr()){
     showMsg("오늘 데이터가 아직 없습니다. '오늘 데이터 갱신'을 눌러주세요.", "info");
   }
 })();
