@@ -64,6 +64,7 @@
   }
   .status-text{font-size:13px;color:var(--ink-soft);flex:1;min-width:180px}
   .status-text b{color:var(--ink)}
+  .quota-note{font-size:11.5px;color:var(--ink-soft);margin:6px 0 8px}
   button{
     font-family:inherit;font-size:13px;font-weight:700;
     border:1.5px solid var(--ink);background:var(--card);color:var(--ink);
@@ -245,7 +246,7 @@
   <div class="statusbar">
     <span class="status-text" id="statusText">데이터 없음</span>
     <select id="periodSel" class="period-sel" aria-label="조회 기간">
-      <option value="1">최근 1일</option>
+      <option value="3">최근 3일</option>
       <option value="7">최근 1주</option>
       <option value="14">최근 2주</option>
       <option value="30">최근 1개월</option>
@@ -255,6 +256,7 @@
     <button class="btn-primary" id="refreshBtn" type="button">오늘 데이터 갱신</button>
     <button class="btn-ghost" id="settingsBtn" type="button">설정</button>
   </div>
+  <p class="quota-note">* 검색량 초과 에러가 뜨는 경우 한국시간 16:00 이후 재시도해주세요.</p>
 
   <div class="msg" id="msg" role="status"></div>
 
@@ -284,7 +286,7 @@
           <textarea id="kwEn" spellcheck="false"></textarea>
         </div>
       </div>
-      <p class="hint">갱신 1회당 사용량 ≈ (키워드 + 해시태그 수 합계) × 100유닛 + 소량 (일일 무료 한도 10,000).</p>
+      <p class="hint">갱신 1회당 사용량 ≈ (키워드 + 해시태그 수 합계) × 200유닛 (6개월 창 + 최근 2주 창을 함께 검색). 기본 12개 = 약 2,400유닛 / 일일 한도 10,000. 기간 전환은 쿼터를 쓰지 않아요.</p>
     </div>
     <div class="field">
       <label>해시태그 — 국가별, 한 줄에 하나 (# 없이 입력해도 돼요)</label>
@@ -302,7 +304,7 @@
           <textarea id="tagEn" spellcheck="false" placeholder="vlog&#10;dayinmylife"></textarea>
         </div>
       </div>
-      <p class="hint">영상에 달린 해시태그(#브이로그 등)를 기준으로 검색합니다. 해시태그도 1개당 약 100유닛을 사용해요.</p>
+      <p class="hint">영상에 달린 해시태그(#브이로그 등)를 기준으로 검색합니다. 해시태그도 1개당 약 200유닛을 사용해요.</p>
     </div>
     <div class="field">
       <label>숨긴 채널 (해당 채널의 모든 영상이 랭킹에서 제외됩니다)</label>
@@ -362,9 +364,10 @@
       def:["vlog","day in my life","daily vlog","weekly vlog"], input:"kwEn", tagInput:"tagEn" }
   ];
   var TOP_N = 30;
-  var STORE_N = 45;          // 버킷당 저장 수 (숨기기 여유분)
+  var STORE_N = 400;         // 버킷당 저장 수 (전체 확보 후 기간별로 잘라서 표시)
   var SHORTS_MAX_SEC = 180;  // 3분 이하 = 쇼츠
   var DEFAULT_DAYS = 90;
+  var WIN_LONG = 180, WIN_SHORT = 14; // 검색 창: 6개월(장기 순위용) + 2주(최근 흐름 보강용)
 
   var tab = { fmt: "shorts", ctry: "kr", kw: "" }; // kw "" = 전체
 
@@ -426,7 +429,12 @@
   // ── 설정 UI ───────────────────────────
   function loadSettingsUI(){
     $("apiKey").value = lsGet(LS.key, "");
-    $("periodSel").value = String(lsGet(LS.days, DEFAULT_DAYS));
+    var d = Number(lsGet(LS.days, DEFAULT_DAYS)) || DEFAULT_DAYS;
+    if ([3,7,14,30,90,180].indexOf(d) === -1){ // 구버전 값(예: 1일) 이관
+      d = d < 3 ? 3 : DEFAULT_DAYS;
+      lsSet(LS.days, d);
+    }
+    $("periodSel").value = String(d);
     var kw = lsGet(LS.keywords, defaultKeywords());
     var tg = lsGet(LS.hashtags, {});
     COUNTRIES.forEach(function(c){
@@ -529,20 +537,28 @@
     $("rankList").innerHTML = '<div class="loading-note">' + esc(text) + '</div>';
   }
 
-  // 한 국가: 검색 → 영상 상세(길이·조회수·좋아요) → 채널 구독자 → 쇼츠/롱폼 버킷
-  function processCountry(key, country, keywords, since){
+  // 한 국가: 검색(6개월 창 + 2주 창) → 영상 상세(길이·조회수·좋아요) → 채널 구독자 → 쇼츠/롱폼 버킷
+  function processCountry(key, country, keywords){
     var found = {}; // videoId → [매칭된 키워드들]
+    var sinceLong  = new Date(Date.now() - WIN_LONG*24*3600*1000).toISOString();
+    var sinceShort = new Date(Date.now() - WIN_SHORT*24*3600*1000).toISOString();
+    function collect(json, q){
+      (json.items || []).forEach(function(it){
+        var vid = it.id && it.id.videoId;
+        if (!vid) return;
+        if (!found[vid]) found[vid] = [];
+        if (found[vid].indexOf(q) === -1) found[vid].push(q);
+      });
+    }
     var chain = Promise.resolve();
     keywords.forEach(function(q, idx){
       chain = chain.then(function(){
         setLoading(country.label + " 검색 중… (" + (idx+1) + "/" + keywords.length + ")");
-        return searchVideos(key, q, country.region, country.lang, since).then(function(json){
-          (json.items || []).forEach(function(it){
-            var vid = it.id && it.id.videoId;
-            if (!vid) return;
-            if (!found[vid]) found[vid] = [];
-            if (found[vid].indexOf(q) === -1) found[vid].push(q);
-          });
+        return searchVideos(key, q, country.region, country.lang, sinceLong).then(function(json){
+          collect(json, q);
+          return searchVideos(key, q, country.region, country.lang, sinceShort);
+        }).then(function(json){
+          collect(json, q);
         });
       });
     });
@@ -618,20 +634,17 @@
       showMsg("검색 키워드가 비어 있습니다. 설정에서 추가해주세요.", "error");
       return;
     }
-    var days = Number(lsGet(LS.days, DEFAULT_DAYS)) || DEFAULT_DAYS;
-
     refreshing = true;
     clearMsg();
     $("refreshBtn").disabled = true;
     $("placeholder").style.display = "none";
 
-    var since = new Date(Date.now() - days*24*3600*1000).toISOString();
     var buckets = { shorts:{}, long:{} };
 
     var chain = Promise.resolve();
     COUNTRIES.forEach(function(c){
       chain = chain.then(function(){
-        return processCountry(key, c, queries[c.code], since).then(function(res){
+        return processCountry(key, c, queries[c.code]).then(function(res){
           buckets.shorts[c.code] = res.shorts;
           buckets.long[c.code]   = res.long;
         });
@@ -642,9 +655,9 @@
       var today = todayStr();
       var cur = lsGet(LS.today, null);
       if (cur && cur.date && cur.date !== today) lsSet(LS.prev, cur);
-      lsSet(LS.today, { date: today, days: days, buckets: buckets });
+      lsSet(LS.today, { date: today, buckets: buckets });
       renderFromSnapshot();
-      showMsg("갱신 완료 — 최근 " + days + "일 영상 기준, 3개국 × 쇼츠/롱폼 랭킹이 업데이트되었습니다.", "info");
+      showMsg("갱신 완료 — 최근 6개월치를 확보했습니다. 이제 기간 전환은 갱신 없이(쿼터 소모 없이) 즉시 반영됩니다.", "info");
     }).catch(function(err){
       $("rankList").innerHTML = "";
       var cur = lsGet(LS.today, null);
@@ -669,8 +682,17 @@
     lsGet(LS.hidden, []).forEach(function(h){ hidden[h.id] = true; });
     return arr.filter(function(v){ return !hidden[v.chId]; });
   }
+  function periodList(snapshot, fmt, ctry){
+    var days = Number(lsGet(LS.days, DEFAULT_DAYS)) || DEFAULT_DAYS;
+    var cutoff = Date.now() - days*24*3600*1000;
+    return bucketList(snapshot, fmt, ctry).filter(function(v){
+      if (!v.at) return false;
+      var t = new Date(v.at).getTime();
+      return !isNaN(t) && t >= cutoff;
+    });
+  }
   function displayList(snapshot, fmt, ctry, kw){
-    var arr = bucketList(snapshot, fmt, ctry);
+    var arr = periodList(snapshot, fmt, ctry);
     if (kw){
       arr = arr.filter(function(v){ return v.kws && v.kws.indexOf(kw) !== -1; });
     }
@@ -679,7 +701,7 @@
 
   function renderKwBar(cur){
     var box = $("kwBar");
-    var full = bucketList(cur, tab.fmt, tab.ctry);
+    var full = periodList(cur, tab.fmt, tab.ctry);
     if (!cur || !full.length){
       box.innerHTML = "";
       return;
@@ -735,12 +757,14 @@
     $("placeholder").style.display = "none";
 
     var isToday = cur.date === todayStr();
-    $("statusText").innerHTML = "기준일 <b>" + esc(cur.date) + "</b> · 최근 " + (cur.days || DEFAULT_DAYS) + "일 영상" +
-      (isToday ? " (오늘)" : " — 오래된 데이터입니다. 갱신해주세요.");
+    var days = Number(lsGet(LS.days, DEFAULT_DAYS)) || DEFAULT_DAYS;
+    var labels = { 3:"3일", 7:"1주", 14:"2주", 30:"1개월", 90:"3개월", 180:"6개월" };
+    $("statusText").innerHTML = "기준일 <b>" + esc(todayStr()) + "</b> · 최근 " + (labels[days] || days + "일") + " 영상" +
+      (isToday ? "" : " · 데이터는 " + esc(cur.date) + " 갱신분 — 갱신해주세요");
 
     if (!list.length){
       box.innerHTML = '<div class="placeholder">' +
-        (tab.kw ? '"' + esc(tab.kw) + '" 키워드로 걸린 영상이 이 조합에 없어요.' : '이 조합(형식×국가)에서 잡힌 영상이 없어요. 해당 국가의 키워드나 조회 기간을 조정해보세요.') +
+        (tab.kw ? '"' + esc(tab.kw) + '" 키워드로 걸린 영상이 이 기간·조합에 없어요.' : '이 기간·조합에서 잡힌 영상이 없어요. 기간을 넓히거나 키워드를 조정해보세요.') +
         '</div>';
       return;
     }
@@ -849,12 +873,8 @@
   $("periodSel").addEventListener("change", function(){
     var days = Number(this.value) || DEFAULT_DAYS;
     lsSet(LS.days, days);
-    var cur = lsGet(LS.today, null);
-    if (!cur || Number(cur.days) !== days){
-      showMsg("기간이 변경되었습니다. '오늘 데이터 갱신'을 누르면 새 기간으로 조회합니다.", "info");
-    } else {
-      clearMsg();
-    }
+    clearMsg();
+    renderFromSnapshot(); // 저장된 6개월치에서 즉시 필터 — 쿼터 소모 없음
   });
   $("saveSettings").addEventListener("click", function(){
     lsSet(LS.key, $("apiKey").value.trim());
