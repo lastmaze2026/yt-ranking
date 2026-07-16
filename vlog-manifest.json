@@ -1,0 +1,16 @@
+{
+  "name": "VLOG × 3개국 YouTube TOP 30",
+  "short_name": "VLOG 30",
+  "description": "한국·일본·영미권 브이로그 채널 랭킹 — 쇼츠/롱폼별 TOP 30",
+  "lang": "ko",
+  "start_url": "./vlog-ranking.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#FBFAF6",
+  "theme_color": "#211F1A",
+  "icons": [
+    { "src": "vlog-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "vlog-icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "vlog-icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
