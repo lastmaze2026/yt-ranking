@@ -107,6 +107,17 @@
   }
   .ctry-tab:hover{border-color:var(--ink);color:var(--ink);background:var(--card)}
   .ctry-tab.on{background:var(--red);border-color:var(--red);color:#fff}
+  .kw-bar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 4px;align-items:center}
+  .kw-label{font-size:11.5px;color:var(--ink-soft);font-weight:700;letter-spacing:.02em}
+  .kw-chip{
+    border:1px solid var(--line);border-radius:14px;
+    padding:3px 12px;font-size:12px;font-weight:500;color:var(--ink-soft);background:var(--card);
+  }
+  .kw-chip b{font-weight:700;color:var(--ink)}
+  .kw-chip:hover{border-color:var(--ink);color:var(--ink);background:var(--card)}
+  .kw-chip.on{background:var(--ink);border-color:var(--ink);color:var(--card)}
+  .kw-chip.on b{color:var(--card)}
+  .kw-chip.zero{opacity:.5}
 
   /* ── settings ─────────────────────────── */
   .settings{
@@ -273,7 +284,25 @@
           <textarea id="kwEn" spellcheck="false"></textarea>
         </div>
       </div>
-      <p class="hint">갱신 1회당 사용량 ≈ (세 칸의 키워드 수 합계) × 100유닛 + 소량. 기본 12개 = 약 1,200유닛 (일일 무료 한도 10,000).</p>
+      <p class="hint">갱신 1회당 사용량 ≈ (키워드 + 해시태그 수 합계) × 100유닛 + 소량 (일일 무료 한도 10,000).</p>
+    </div>
+    <div class="field">
+      <label>해시태그 — 국가별, 한 줄에 하나 (# 없이 입력해도 돼요)</label>
+      <div class="kw-grid">
+        <div>
+          <label for="tagKr" style="font-weight:500;color:var(--ink-soft)">한국</label>
+          <textarea id="tagKr" spellcheck="false" placeholder="브이로그&#10;일상"></textarea>
+        </div>
+        <div>
+          <label for="tagJp" style="font-weight:500;color:var(--ink-soft)">일본</label>
+          <textarea id="tagJp" spellcheck="false" placeholder="vlog&#10;日常vlog"></textarea>
+        </div>
+        <div>
+          <label for="tagEn" style="font-weight:500;color:var(--ink-soft)">영미권</label>
+          <textarea id="tagEn" spellcheck="false" placeholder="vlog&#10;dayinmylife"></textarea>
+        </div>
+      </div>
+      <p class="hint">영상에 달린 해시태그(#브이로그 등)를 기준으로 검색합니다. 해시태그도 1개당 약 100유닛을 사용해요.</p>
     </div>
     <div class="field">
       <label>숨긴 채널 (해당 채널의 모든 영상이 랭킹에서 제외됩니다)</label>
@@ -291,6 +320,7 @@
     <button class="ctry-tab" type="button" data-ctry="jp">일본</button>
     <button class="ctry-tab" type="button" data-ctry="en">영미권</button>
   </nav>
+  <nav class="kw-bar" id="kwBar" aria-label="키워드 필터"></nav>
 
   <div id="content">
     <div class="placeholder" id="placeholder">
@@ -313,6 +343,7 @@
   var LS = {
     key:      "vlg_apikey",
     keywords: "vlg_keywords",     // {kr:[],jp:[],en:[]}
+    hashtags: "vlg_hashtags",     // {kr:[],jp:[],en:[]} — "#태그" 형태로 저장
     hidden:   "vlg_hidden",       // 숨긴 채널 [{id,title}]
     days:     "vlg_days",
     today:    "vlg_vid_today",    // 영상 랭킹 스냅숏 (채널 랭킹 시절 키와 분리)
@@ -324,18 +355,18 @@
 
   var COUNTRIES = [
     { code:"kr", label:"한국",   region:"KR", lang:"ko",
-      def:["브이로그","일상 브이로그","직장인 브이로그","주부 브이로그"], input:"kwKr" },
+      def:["브이로그","일상 브이로그","직장인 브이로그","주부 브이로그"], input:"kwKr", tagInput:"tagKr" },
     { code:"jp", label:"일본",   region:"JP", lang:"ja",
-      def:["vlog 日常","ルーティン vlog","休日 vlog","社会人 vlog"], input:"kwJp" },
+      def:["vlog 日常","ルーティン vlog","休日 vlog","社会人 vlog"], input:"kwJp", tagInput:"tagJp" },
     { code:"en", label:"영미권", region:"US", lang:"en",
-      def:["vlog","day in my life","daily vlog","weekly vlog"], input:"kwEn" }
+      def:["vlog","day in my life","daily vlog","weekly vlog"], input:"kwEn", tagInput:"tagEn" }
   ];
   var TOP_N = 30;
   var STORE_N = 45;          // 버킷당 저장 수 (숨기기 여유분)
   var SHORTS_MAX_SEC = 180;  // 3분 이하 = 쇼츠
   var DEFAULT_DAYS = 90;
 
-  var tab = { fmt: "shorts", ctry: "kr" };
+  var tab = { fmt: "shorts", ctry: "kr", kw: "" }; // kw "" = 전체
 
   // ── 유틸 ──────────────────────────────
   function $(id){ return document.getElementById(id); }
@@ -397,8 +428,12 @@
     $("apiKey").value = lsGet(LS.key, "");
     $("periodSel").value = String(lsGet(LS.days, DEFAULT_DAYS));
     var kw = lsGet(LS.keywords, defaultKeywords());
+    var tg = lsGet(LS.hashtags, {});
     COUNTRIES.forEach(function(c){
       $(c.input).value = (kw[c.code] || c.def).join("\n");
+      $(c.tagInput).value = (tg[c.code] || []).map(function(t){
+        return t.charAt(0) === "#" ? t.slice(1) : t;
+      }).join("\n");
     });
     renderHiddenList();
   }
@@ -496,7 +531,7 @@
 
   // 한 국가: 검색 → 영상 상세(길이·조회수·좋아요) → 채널 구독자 → 쇼츠/롱폼 버킷
   function processCountry(key, country, keywords, since){
-    var found = {}; // videoId → true (중복 제거)
+    var found = {}; // videoId → [매칭된 키워드들]
     var chain = Promise.resolve();
     keywords.forEach(function(q, idx){
       chain = chain.then(function(){
@@ -504,7 +539,9 @@
         return searchVideos(key, q, country.region, country.lang, since).then(function(json){
           (json.items || []).forEach(function(it){
             var vid = it.id && it.id.videoId;
-            if (vid) found[vid] = true;
+            if (!vid) return;
+            if (!found[vid]) found[vid] = [];
+            if (found[vid].indexOf(q) === -1) found[vid].push(q);
           });
         });
       });
@@ -547,7 +584,8 @@
               comments: (st.commentCount === undefined || st.commentCount === null) ? -1 : Number(st.commentCount),
               chId: sn.channelId || "",
               chTitle: sn.channelTitle || "",
-              chSubs: subsMap[sn.channelId] !== undefined ? subsMap[sn.channelId] : -1
+              chSubs: subsMap[sn.channelId] !== undefined ? subsMap[sn.channelId] : -1,
+              kws: found[v.id] || []
             };
             if (sec > 0 && sec <= SHORTS_MAX_SEC) shorts.push(entry);
             else long_.push(entry);
@@ -570,7 +608,12 @@
     if (refreshing) return;
     var key = lsGet(LS.key, "") || DEFAULT_KEY;
     var kw = lsGet(LS.keywords, defaultKeywords());
-    var total = COUNTRIES.reduce(function(n,c){ return n + (kw[c.code]||[]).length; }, 0);
+    var tg = lsGet(LS.hashtags, {});
+    var queries = {};
+    COUNTRIES.forEach(function(c){
+      queries[c.code] = (kw[c.code] || []).concat(tg[c.code] || []);
+    });
+    var total = COUNTRIES.reduce(function(n,c){ return n + queries[c.code].length; }, 0);
     if (!total){
       showMsg("검색 키워드가 비어 있습니다. 설정에서 추가해주세요.", "error");
       return;
@@ -588,7 +631,7 @@
     var chain = Promise.resolve();
     COUNTRIES.forEach(function(c){
       chain = chain.then(function(){
-        return processCountry(key, c, kw[c.code] || [], since).then(function(res){
+        return processCountry(key, c, queries[c.code], since).then(function(res){
           buckets.shorts[c.code] = res.shorts;
           buckets.long[c.code]   = res.long;
         });
@@ -619,17 +662,68 @@
   }
 
   // ── 렌더링 ────────────────────────────
-  function displayList(snapshot, fmt, ctry){
+  function bucketList(snapshot, fmt, ctry){
     if (!snapshot || !snapshot.buckets) return [];
     var arr = (snapshot.buckets[fmt] || {})[ctry] || [];
     var hidden = {};
     lsGet(LS.hidden, []).forEach(function(h){ hidden[h.id] = true; });
-    return arr.filter(function(v){ return !hidden[v.chId]; }).slice(0, TOP_N);
+    return arr.filter(function(v){ return !hidden[v.chId]; });
+  }
+  function displayList(snapshot, fmt, ctry, kw){
+    var arr = bucketList(snapshot, fmt, ctry);
+    if (kw){
+      arr = arr.filter(function(v){ return v.kws && v.kws.indexOf(kw) !== -1; });
+    }
+    return arr.slice(0, TOP_N);
+  }
+
+  function renderKwBar(cur){
+    var box = $("kwBar");
+    var full = bucketList(cur, tab.fmt, tab.ctry);
+    if (!cur || !full.length){
+      box.innerHTML = "";
+      return;
+    }
+    // 키워드별 매칭 수 집계 (저장된 상위 후보군 기준)
+    var counts = {};
+    var hasKws = false;
+    full.forEach(function(v){
+      (v.kws || []).forEach(function(k){
+        hasKws = true;
+        counts[k] = (counts[k] || 0) + 1;
+      });
+    });
+    if (!hasKws){
+      box.innerHTML = '<span class="kw-label">키워드별 표기는 다음 갱신부터 적용됩니다.</span>';
+      return;
+    }
+    // 칩 순서: 설정된 키워드 순 → 해시태그 순 → 데이터에만 있는 항목
+    var ordered = [];
+    var settingsKw = ((lsGet(LS.keywords, defaultKeywords())[tab.ctry]) || [])
+      .concat((lsGet(LS.hashtags, {})[tab.ctry]) || []);
+    settingsKw.forEach(function(k){
+      if (ordered.indexOf(k) === -1) ordered.push(k);
+    });
+    Object.keys(counts).forEach(function(k){
+      if (ordered.indexOf(k) === -1) ordered.push(k);
+    });
+    // 현재 필터가 이 국가에 없는 키워드면 해제
+    if (tab.kw && ordered.indexOf(tab.kw) === -1) tab.kw = "";
+
+    var html = '<span class="kw-label">키워드</span>' +
+      '<button class="kw-chip' + (tab.kw === "" ? " on" : "") + '" type="button" data-kw="">전체 <b>' + full.length + '</b></button>';
+    ordered.forEach(function(k){
+      var n = counts[k] || 0;
+      html += '<button class="kw-chip' + (tab.kw === k ? " on" : "") + (n === 0 ? " zero" : "") + '" type="button" data-kw="' + esc(k) + '">' +
+              esc(k) + ' <b>' + n + '</b></button>';
+    });
+    box.innerHTML = html;
   }
 
   function renderFromSnapshot(){
     var cur = lsGet(LS.today, null);
-    var list = displayList(cur, tab.fmt, tab.ctry);
+    renderKwBar(cur);
+    var list = displayList(cur, tab.fmt, tab.ctry, tab.kw);
     var box = $("rankList");
 
     if (!cur){
@@ -645,13 +739,15 @@
       (isToday ? " (오늘)" : " — 오래된 데이터입니다. 갱신해주세요.");
 
     if (!list.length){
-      box.innerHTML = '<div class="placeholder">이 조합(형식×국가)에서 잡힌 영상이 없어요. 해당 국가의 키워드나 조회 기간을 조정해보세요.</div>';
+      box.innerHTML = '<div class="placeholder">' +
+        (tab.kw ? '"' + esc(tab.kw) + '" 키워드로 걸린 영상이 이 조합에 없어요.' : '이 조합(형식×국가)에서 잡힌 영상이 없어요. 해당 국가의 키워드나 조회 기간을 조정해보세요.') +
+        '</div>';
       return;
     }
 
     var prev = lsGet(LS.prev, null);
     var prevRank = {}, prevViews = {};
-    displayList(prev, tab.fmt, tab.ctry).forEach(function(v, i){ prevRank[v.id] = i + 1; });
+    displayList(prev, tab.fmt, tab.ctry, tab.kw).forEach(function(v, i){ prevRank[v.id] = i + 1; });
     if (prev && prev.buckets){
       ["shorts","long"].forEach(function(f){
         var b = prev.buckets[f] || {};
@@ -696,6 +792,11 @@
           '</div>' +
           '<div class="v-meta">' +
             '<span>' + fmtDate(v.at) + ' 업로드</span>' +
+            (v.kws && v.kws.length ?
+              v.kws.map(function(k){
+                return '<button class="hide-btn" type="button" data-kwjump="' + esc(k) + '">' + esc(k) + '</button>';
+              }).join("")
+            : '') +
             '<button class="hide-btn" type="button" data-hide="' + esc(v.chId) + '" data-title="' + esc(v.chTitle) + '">이 채널 숨기기</button>' +
           '</div>' +
         '</div>' +
@@ -714,6 +815,7 @@
     var t = e.target;
     if (!(t.dataset && t.dataset.fmt)) return;
     tab.fmt = t.dataset.fmt;
+    tab.kw = "";
     Array.prototype.forEach.call(document.querySelectorAll(".fmt-tab"), function(b){
       b.classList.toggle("on", b.dataset.fmt === tab.fmt);
     });
@@ -723,9 +825,16 @@
     var t = e.target;
     if (!(t.dataset && t.dataset.ctry)) return;
     tab.ctry = t.dataset.ctry;
+    tab.kw = "";
     Array.prototype.forEach.call(document.querySelectorAll(".ctry-tab"), function(b){
       b.classList.toggle("on", b.dataset.ctry === tab.ctry);
     });
+    renderFromSnapshot();
+  });
+  $("kwBar").addEventListener("click", function(e){
+    var t = e.target.closest ? e.target.closest(".kw-chip") : e.target;
+    if (!t || !t.dataset || t.dataset.kw === undefined) return;
+    tab.kw = t.dataset.kw;
     renderFromSnapshot();
   });
   $("settingsBtn").addEventListener("click", function(){
@@ -749,14 +858,19 @@
   });
   $("saveSettings").addEventListener("click", function(){
     lsSet(LS.key, $("apiKey").value.trim());
-    var kw = {};
+    var kw = {}, tg = {};
     COUNTRIES.forEach(function(c){
       kw[c.code] = $(c.input).value.split("\n")
         .map(function(s){ return s.trim(); })
         .filter(function(s){ return s.length > 0; });
       if (!kw[c.code].length) kw[c.code] = c.def.slice();
+      tg[c.code] = $(c.tagInput).value.split("\n")
+        .map(function(s){ return s.trim().replace(/^#+/, ""); })
+        .filter(function(s){ return s.length > 0; })
+        .map(function(s){ return "#" + s; });
     });
     lsSet(LS.keywords, kw);
+    lsSet(LS.hashtags, tg);
     showMsg("설정을 저장했습니다. 키워드 변경은 '오늘 데이터 갱신'을 눌러야 반영됩니다.", "info");
     $("settingsPanel").classList.remove("open");
   });
@@ -765,6 +879,11 @@
     var t = e.target;
     if (t.dataset && t.dataset.hide) hideChannel(t.dataset.hide, t.dataset.title || "");
     else if (t.dataset && t.dataset.restore) restoreChannel(t.dataset.restore);
+    else if (t.dataset && t.dataset.kwjump){
+      tab.kw = t.dataset.kwjump;
+      renderFromSnapshot();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   });
 
   // ── PWA: 서비스 워커 등록 (https 배포에서만) ──
