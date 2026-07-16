@@ -77,6 +77,13 @@
   .btn-primary:hover{background:#A92F22;border-color:#A92F22;color:#fff}
   .btn-ghost{border-color:var(--line);color:var(--ink-soft);font-weight:500}
   .btn-ghost:hover{background:var(--paper);color:var(--ink);border-color:var(--ink-soft)}
+  .period-sel{
+    width:auto;max-width:none;
+    padding:7px 10px;font-size:13px;font-weight:700;font-family:inherit;
+    border:1.5px solid var(--ink);border-radius:2px;background:var(--card);color:var(--ink);
+    cursor:pointer;
+  }
+  .period-sel:focus{outline:2px solid var(--red);outline-offset:2px}
 
   /* ── message ──────────────────────────── */
   .msg{display:none;padding:12px 14px;border-radius:2px;font-size:13px;margin:10px 0}
@@ -205,7 +212,7 @@
     .rank-cell{grid-area:rank}
     .vthumb{grid-area:thumb;justify-self:start}
     .v-info{grid-area:info}
-    .stats{grid-area:stats;justify-content:flex-start;gap:18px;padding-left:4px}
+    .stats{grid-area:stats;justify-content:space-between;gap:10px;padding:0 4px;width:100%}
   }
   @media (prefers-reduced-motion:no-preference){
     .rank-row{animation:rise .35s ease both}
@@ -226,8 +233,16 @@
 
   <div class="statusbar">
     <span class="status-text" id="statusText">데이터 없음</span>
-    <button class="btn-ghost" id="settingsBtn" type="button">설정</button>
+    <select id="periodSel" class="period-sel" aria-label="조회 기간">
+      <option value="1">최근 1일</option>
+      <option value="7">최근 1주</option>
+      <option value="14">최근 2주</option>
+      <option value="30">최근 1개월</option>
+      <option value="90">최근 3개월</option>
+      <option value="180">최근 6개월</option>
+    </select>
     <button class="btn-primary" id="refreshBtn" type="button">오늘 데이터 갱신</button>
+    <button class="btn-ghost" id="settingsBtn" type="button">설정</button>
   </div>
 
   <div class="msg" id="msg" role="status"></div>
@@ -241,15 +256,6 @@
         <button class="btn-ghost" id="toggleKey" type="button">표시</button>
       </div>
       <p class="hint">기본 키가 내장되어 있어 그대로 사용 가능합니다. 본인 키로 쓰려면 여기에 입력하세요 (이 브라우저에만 저장). 발급: <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → 사용자 인증 정보</a></p>
-    </div>
-    <div class="field">
-      <label for="periodSel">조회 기간 (이 기간 안에 업로드된 영상만 집계)</label>
-      <select id="periodSel">
-        <option value="30">최근 1개월</option>
-        <option value="90">최근 3개월</option>
-        <option value="180">최근 6개월</option>
-      </select>
-      <p class="hint">"요즘 흐름"은 1개월, 스테디셀러 파악은 3~6개월이 잘 맞아요. 변경 후 갱신해야 반영됩니다.</p>
     </div>
     <div class="field">
       <label>검색 키워드 — 국가별, 한 줄에 하나 (해당 국가 언어 추천)</label>
@@ -675,7 +681,7 @@
       var cUrl = "https://www.youtube.com/channel/" + encodeURIComponent(v.chId);
       var likesTxt = v.likes < 0 ? "—" : fmtMan(v.likes);
       var cmtTxt = v.comments < 0 ? "—" : fmtMan(v.comments);
-      var subsTxt = v.chSubs < 0 ? "구독자 비공개" : "구독자 " + fmtMan(v.chSubs);
+      var subsNumTxt = v.chSubs < 0 ? "—" : fmtMan(v.chSubs);
 
       return '' +
       '<article class="rank-row">' +
@@ -687,7 +693,6 @@
           '<div class="v-title"><a href="' + vUrl + '" target="_blank" rel="noopener">' + esc(v.title) + '</a></div>' +
           '<div class="v-ch">' +
             '<a href="' + cUrl + '" target="_blank" rel="noopener">' + esc(v.chTitle) + '</a>' +
-            '<span class="subs">' + subsTxt + '</span>' +
           '</div>' +
           '<div class="v-meta">' +
             '<span>' + fmtDate(v.at) + ' 업로드</span>' +
@@ -697,6 +702,7 @@
         '<div class="stats">' +
           '<div class="stat main"><div class="num">' + fmtMan(v.views) + '</div><div class="lbl">조회수</div>' + viewDeltaHtml + '</div>' +
           '<div class="stat"><div class="num">' + likesTxt + '</div><div class="lbl">좋아요</div></div>' +
+          '<div class="stat"><div class="num">' + subsNumTxt + '</div><div class="lbl">구독자</div></div>' +
           '<div class="stat"><div class="num">' + cmtTxt + '</div><div class="lbl">댓글</div></div>' +
         '</div>' +
       '</article>';
@@ -731,9 +737,18 @@
     inp.type = show ? "text" : "password";
     this.textContent = show ? "가리기" : "표시";
   });
+  $("periodSel").addEventListener("change", function(){
+    var days = Number(this.value) || DEFAULT_DAYS;
+    lsSet(LS.days, days);
+    var cur = lsGet(LS.today, null);
+    if (!cur || Number(cur.days) !== days){
+      showMsg("기간이 변경되었습니다. '오늘 데이터 갱신'을 누르면 새 기간으로 조회합니다.", "info");
+    } else {
+      clearMsg();
+    }
+  });
   $("saveSettings").addEventListener("click", function(){
     lsSet(LS.key, $("apiKey").value.trim());
-    lsSet(LS.days, Number($("periodSel").value) || DEFAULT_DAYS);
     var kw = {};
     COUNTRIES.forEach(function(c){
       kw[c.code] = $(c.input).value.split("\n")
@@ -742,7 +757,7 @@
       if (!kw[c.code].length) kw[c.code] = c.def.slice();
     });
     lsSet(LS.keywords, kw);
-    showMsg("설정을 저장했습니다. 키워드/기간 변경은 '오늘 데이터 갱신'을 눌러야 반영됩니다.", "info");
+    showMsg("설정을 저장했습니다. 키워드 변경은 '오늘 데이터 갱신'을 눌러야 반영됩니다.", "info");
     $("settingsPanel").classList.remove("open");
   });
   $("refreshBtn").addEventListener("click", refresh);
